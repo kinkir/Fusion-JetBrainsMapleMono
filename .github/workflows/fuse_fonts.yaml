@@ -87,6 +87,7 @@ jobs:
           PREV_RUN_ID="$(gh run list --workflow "$GITHUB_WORKFLOW" --limit 2 --json "databaseId" --jq ".[1].databaseId")"
           echo "PREV_RUN_ID="$PREV_RUN_ID"" >> "$GITHUB_ENV"
           echo "Previous Run Id: $PREV_RUN_ID"
+          gh issue create --title "Issue report" --body "$NUM_OPEN_ISSUES issues remaining" --repo $GITHUB_REPOSITORY
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
