@@ -1,7 +1,7 @@
 name: Fuse Fonts
 
 on:
-  schedule:
+  # schedule:
     # - cron: "*/5 * * * *"
   push:
     branches:
