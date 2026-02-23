@@ -108,16 +108,30 @@ jobs:
 
       - name: Build Source Fonts
         run: |
+          # 1. 编译 JetBrains Mono
           git clone --depth 1 "$JETBRAINS_GIT_URL" JB
           cd JB && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
           mkdir -p src/jb && cp -r JB/fonts/ttf/*.ttf src/jb/
           
+          # 2. 编译纯英文版 Maple Mono
           git clone --depth 1 "$MAPLE_GIT_URL" MP
           cd MP && pip install -r requirements.txt
           python build.py --normal --liga --hinted --ttf-only ${{ matrix.NERD.A }}
           cd ..
           mkdir -p src/mp
-          find MP/fonts -name "*.ttf" -exec cp {} src/mp/ \;
+          
+          # 【核心修复】：根据 NF 需求，从特定输出文件夹精准拷贝
+          # 这样 src/mp 里就永远只有一套目标文件，不会出现混淆
+          if [[ "${{ matrix.NERD.S }}" == "NF" ]]; then
+            # 如果是 NF 模式，优先进入 NF 目录拷贝
+            find MP/fonts -type d -name "NF*" -exec cp -r {}/src/. src/mp/ 2>/dev/null || \
+            find MP/fonts -type f -name "*NF*.ttf" -exec cp {} src/mp/ \;
+          else
+            # 如果是 XX 模式，避开所有带 NF 字样的目录和文件
+            find MP/fonts -type f -name "*.ttf" ! -name "*NF*" -exec cp {} src/mp/ \;
+          fi
+          echo "--- Maple 源文件列表 ---"
+          ls -lh src/mp
 
       - name: Install Hard Tools
         run: |
@@ -134,7 +148,9 @@ jobs:
             J_SRC=$(find src/jb -iname "*$S.ttf" | head -n 1)
             [[ -z "$M_SRC" || -z "$J_SRC" ]] && continue
 
-            echo "🔨 正在处理字重: $S"
+            # 打印源文件大小以备检查 (2.3M 为正常，300K 为图标丢失)
+            echo "🔨 正在处理字重: $S | 源文件大小: $(du -sh "$M_SRC" | cut -f1)"
+            
             fontforge -lang=ff -c "Open(\"$M_SRC\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"c.ttf\");"
             fontforge "fuse_fonts.ff" "c.ttf" "$J_SRC" "$FUSION_ID-$S" "$FUSION_NAME" "$FUSION_NAME $S" "$S" "t.ttf" || true
             
@@ -152,11 +168,10 @@ jobs:
 
       - name: Prepare Release Info
         run: |
-          # 修复三元运算符报错：在 Shell 中预处理描述文字
           if [[ "${{ env.NERD_SUFFIX }}" == "NF" ]]; then
-            echo "NERD_DESC=含 Nerd Font 图标 (2.3MB+)" >> $GITHUB_ENV
+            echo "NERD_DESC=含 Nerd Font 图标 (全量补全)" >> $GITHUB_ENV
           else
-            echo "NERD_DESC=纯净英文 (300KB+)" >> $GITHUB_ENV
+            echo "NERD_DESC=纯净英文 (极致轻量)" >> $GITHUB_ENV
           fi
           
           if [[ "${{ env.LIGA_SUFFIX }}" == "NL" ]]; then
@@ -177,7 +192,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             ## ✅ 纯英文编程增强版构建完成
-            - **无中文混入**：本项目仅包含 JetBrains 与 Maple 的英文、符号及图标。
+            - **无中文混入**：仅包含 JetBrains 与 Maple 的英文、符号及图标。
             - **源版本**: JB(${{ env.JB_VER }}) MP(${{ env.MP_VER }})
             - **变体说明**:
               - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_DESC }}
