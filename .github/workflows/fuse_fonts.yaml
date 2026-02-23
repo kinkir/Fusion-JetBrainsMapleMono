@@ -1,9 +1,12 @@
-name: Fuse Fonts (Full Icons & Weights)
+name: Fuse Fonts (Pro Edition)
 
 on:
+  schedule:
+    - cron: "0 0 * * 0" # 每周日 UTC 0点检查一次更新
   push:
     branches:
-      - "**"
+      - "main"
+      - "master"
   workflow_dispatch:
     inputs:
       FORCE:
@@ -25,42 +28,140 @@ env:
   MAPLE_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/subframe7536/maple-font/releases/latest
   FUSION_NAME: JetBrains Maple Mono
   FUSION_ID: JetBrainsMapleMono
-  FUSION_DESCRIPTION: Fused with JetBrains Mono & Maple Mono (Full Nerd Font Icons)
+  FUSION_DESCRIPTION: Pro-built font fused with JetBrains Mono & Maple Mono (Full Icons)
   FUSION_DEVELOPER: Space Time
+  FUSION_URL: ${{ github.server_url }}/${{ github.repository }}
 
 jobs:
-  check-updates:
-    name: Check Updates
+  check-release-updates:
+    name: Check Release Updates
     runs-on: ubuntu-latest
     outputs:
-      JB_VER: ${{ steps.check.outputs.JB_VER }}
-      MP_VER: ${{ steps.check.outputs.MP_VER }}
+      IS_RELEASE_UPDATED: ${{ steps.check.outputs.IS_RELEASE_UPDATED }}
+      JETBRAINS_LATEST_VERSION: ${{ steps.check.outputs.JETBRAINS_LATEST_VERSION }}
+      MAPLE_LATEST_VERSION: ${{ steps.check.outputs.MAPLE_LATEST_VERSION }}
     steps:
-      - name: Fetch Updates
+      - name: Fetch Git Folder
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .git
+      - name: Get Previous Run Id
+        id: prev_id
+        run: |
+          # 核心移植：获取上一次成功的运行 ID，若无则为空
+          ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
+          echo "PREV_RUN_ID=$ID" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download Previous Versions
+        if: env.PREV_RUN_ID != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: Versions
+          run-id: ${{ env.PREV_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check Updates
         id: check
         run: |
+          JB_PREV="$(cat jetbrains_version.txt 2>/dev/null || echo "")"
+          MP_PREV="$(cat maple_version.txt 2>/dev/null || echo "")"
           JB_CUR="$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
           MP_CUR="$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
-          echo "JB_VER=$JB_CUR" >> "$GITHUB_OUTPUT"
-          echo "MP_VER=$MP_CUR" >> "$GITHUB_OUTPUT"
+          if [[ "$FORCE" == "true" || ("$JB_PREV" != "$JB_CUR" || "$MP_PREV" != "$MP_CUR") ]]; then
+            echo "IS_RELEASE_UPDATED=true" >> "$GITHUB_OUTPUT"
+            echo "JETBRAINS_LATEST_VERSION=$JB_CUR" >> "$GITHUB_OUTPUT"
+            echo "MAPLE_LATEST_VERSION=$MP_CUR" >> "$GITHUB_OUTPUT"
+            echo "$JB_CUR" > jetbrains_version.txt
+            echo "$MP_CUR" > maple_version.txt
+          else
+            echo "IS_RELEASE_UPDATED=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload Latest Versions
+        uses: actions/upload-artifact@v4
+        with:
+          name: Versions
+          path: "*_version.txt"
+
+  check-commit-updates:
+    name: Check Commit Updates
+    runs-on: ubuntu-latest
+    outputs:
+      IS_COMMIT_UPDATED: ${{ steps.check.outputs.IS_COMMIT_UPDATED }}
+      JETBRAINS_LATEST_HASH: ${{ steps.check.outputs.JETBRAINS_LATEST_HASH }}
+      MAPLE_LATEST_HASH: ${{ steps.check.outputs.MAPLE_LATEST_HASH }}
+    steps:
+      - name: Fetch Git Folder
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .git
+      - name: Get Previous Run Id
+        id: prev_id
+        run: |
+          ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
+          echo "PREV_RUN_ID=$ID" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download Previous Hashes
+        if: env.PREV_RUN_ID != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: Hashes
+          run-id: ${{ env.PREV_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check Commit Updates
+        id: check
+        run: |
+          JB_HASH_PREV="$(cat jetbrains_hash.txt 2>/dev/null || echo "")"
+          MP_HASH_PREV="$(cat maple_hash.txt 2>/dev/null || echo "")"
+          JB_HASH_CUR="$(git ls-remote --heads "$JETBRAINS_GIT_URL" "master" | cut "-c1-7")"
+          MP_HASH_CUR="$(git ls-remote --heads "$MAPLE_GIT_URL" "variable" | cut "-c1-7")"
+          if [[ "$FORCE" == "true" || "$JB_HASH_PREV" != "$JB_HASH_CUR" || "$MP_HASH_PREV" != "$MP_HASH_CUR" ]]; then
+            echo "IS_COMMIT_UPDATED=true" >> "$GITHUB_OUTPUT"
+            echo "JETBRAINS_LATEST_HASH=$JB_HASH_CUR" >> "$GITHUB_OUTPUT"
+            echo "MAPLE_LATEST_HASH=$MP_HASH_CUR" >> "$GITHUB_OUTPUT"
+            echo "$JB_HASH_CUR" > jetbrains_hash.txt
+            echo "$MP_HASH_CUR" > maple_hash.txt
+          else
+            echo "IS_COMMIT_UPDATED=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload Latest Hashes
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hashes
+          path: "*_hash.txt"
 
   fuse-fonts:
-    name: Build All Variants
+    name: Build Fonts
     runs-on: ubuntu-latest
-    needs: [check-updates]
+    needs: [check-release-updates, check-commit-updates]
+    if: ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' || needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        # 构建 4 种组合：(带图标/纯净) x (带连字/无连字)
+        MODE: [Release] # 可按需开启 Commit
         NERD: [{S: NF, A: --nerd-font}, {S: XX, A: --no-nerd-font}]
         LIGA: [{S: NL}, {S: XX}]
     env:
+      JETBRAINS_LATEST_VERSION: ${{ needs.check-release-updates.outputs.JETBRAINS_LATEST_VERSION }}
+      MAPLE_LATEST_VERSION: ${{ needs.check-release-updates.outputs.MAPLE_LATEST_VERSION }}
+      JETBRAINS_LATEST_HASH: ${{ needs.check-commit-updates.outputs.JETBRAINS_LATEST_HASH }}
+      MAPLE_LATEST_HASH: ${{ needs.check-commit-updates.outputs.MAPLE_LATEST_HASH }}
       NERD_SUFFIX: ${{ matrix.NERD.S }}
       NERD_ARGS: ${{ matrix.NERD.A }}
       LIGA_SUFFIX: ${{ matrix.LIGA.S }}
+      MODE: ${{ matrix.MODE }}
     steps:
-      - name: Checkout
+      - name: Checkout Tools
         uses: actions/checkout@v4
+
+      - name: Generate Version String
+        run: |
+          if [[ "$MODE" == "Release" ]]; then
+            V="1.${JETBRAINS_LATEST_VERSION//v/}.${MAPLE_LATEST_VERSION//v/}"
+          else V="pre-${{ github.run_number }}"; fi
+          echo "FUSION_VERSION=${V//./}" >> $GITHUB_ENV
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -69,81 +170,65 @@ jobs:
 
       - name: Build Source Fonts
         run: |
-          # 1. 下载并构建 JetBrains Mono
+          # 克隆 JetBrains Mono
           git clone --depth 1 "$JETBRAINS_GIT_URL" JetBrainsMono
           cd JetBrainsMono && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
           mkdir -p source-fonts/jetbrains && cp -r JetBrainsMono/fonts/ttf/* source-fonts/jetbrains/
           
-          # 2. 下载并全量构建 Maple
+          # 构建 Maple Mono (全量补全图标的关键)
           git clone --depth 1 "$MAPLE_GIT_URL" maple-font
           cd maple-font && pip install -r requirements.txt
           python build.py --normal --liga --hinted --ttf-only $NERD_ARGS
           cd ..
-          
           mkdir -p source-fonts/maple
-          # 核心修复：只拷贝当前矩阵需要的源文件，防止 find 冲突
           if [[ "$NERD_SUFFIX" == "NF" ]]; then
             find maple-font/fonts -name "*NF*.ttf" -exec cp {} source-fonts/maple/ \;
           else
             find maple-font/fonts -name "*.ttf" ! -name "*NF*" -exec cp {} source-fonts/maple/ \;
           fi
 
-      - name: Install Hard Tools
-        run: |
-          sudo apt-get -y install fontforge zip
-          pip install foundrytools-cli fonttools gftools
+      - name: Install Hardcore Tools
+        run: sudo apt-get -y install fontforge zip && pip install foundrytools-cli fonttools gftools
 
-      - name: Execute Fusion Loop
+      - name: Execute Fusion & Cleanup
         run: |
           mkdir -p fused-final
           STYLE_LIST="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
-          
           for STYLE in $STYLE_LIST; do
-            # 强化文件查找：在预筛选后的文件夹里寻找
             MAPLE_SRC=$(find source-fonts/maple -iname "*$STYLE.ttf" | head -n 1)
             JB_SRC=$(find source-fonts/jetbrains -iname "*$STYLE.ttf" | head -n 1)
-            
-            if [[ -z "$MAPLE_SRC" || -z "$JB_SRC" ]]; then
-               echo "⚠️ Skip $STYLE (missing source)"
-               continue
-            fi
+            [[ -z "$MAPLE_SRC" || -z "$JB_SRC" ]] && continue
 
-            echo "🚀 Fusing $STYLE (Maple Size: $(du -sh "$MAPLE_SRC" | cut -f1))"
-            
-            # 清理路径节点
+            # 字形净化手术
             fontforge -lang=ff -c "Open(\"$MAPLE_SRC\"); Simplify(); CorrectDirection(); RoundToInt(); Save(\"cleaned.ttf\");"
-            
             fontforge "fuse_fonts.ff" "cleaned.ttf" "$JB_SRC" "$FUSION_ID-$STYLE" "$FUSION_NAME" "$FUSION_NAME $STYLE" "$STYLE" "temp.ttf" || true
             
             if [[ -f "temp.ttf" ]]; then
-              # 如果是 NL 模式，执行去连字脚本
               if [[ "$LIGA_SUFFIX" == "NL" ]]; then
                 fontforge -lang=py -c "import fontforge; f=fontforge.open('temp.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('temp.ttf')"
               fi
-              
-              # 600 字宽校准
               ttx "temp.ttf"
               sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "temp.ttx"
               ttx -o "temp.ttf" "temp.ttx"
-              
               mv "temp.ttf" "fused-final/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-${STYLE}.ttf"
               rm -f "temp.ttx" "cleaned.ttf"
             fi
           done
 
-      - name: Package Fonts (Zip)
-        run: |
-          zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" fused-final/*.ttf
+      - name: Package ZIP
+        run: zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" fused-final/*.ttf
 
-      - name: Create Release
+      - name: Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.FUSION_ID }}-${{ env.NERD_SUFFIX }}-${{ env.LIGA_SUFFIX }}.zip"
-          tag_name: "v1.0.0-FullBuild-${{ github.run_number }}"
-          name: "JetBrainsMaple Full weights #${{ github.run_number }}"
+          tag_name: "v1.0.0-Build-${{ github.run_number }}"
+          name: "JetBrainsMaple Full-Weights Pro #${{ github.run_number }}"
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            ## ✅ 合并任务完成！
-            - **包含图标**: ${{ env.NERD_SUFFIX }}
-            - **字宽策略**: 600 Fixed
-            - **字重数量**: 全部 16 个样式已打包至 ZIP
+            ## ✅ 云端自动构建完成
+            - **模式**: ${{ env.MODE }}
+            - **JetBrains 源**: ${{ env.JETBRAINS_LATEST_VERSION || env.JETBRAINS_LATEST_HASH }}
+            - **Maple 源**: ${{ env.MAPLE_LATEST_VERSION || env.MAPLE_LATEST_HASH }}
+            - **变体**: ${{ env.NERD_SUFFIX }} (Icons), ${{ env.LIGA_SUFFIX }} (Ligatures)
+            - **优化**: 包含 Simplify 路径去噪及 600 字宽锁定
