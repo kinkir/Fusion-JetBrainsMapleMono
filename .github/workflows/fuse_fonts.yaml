@@ -2,7 +2,7 @@ name: Fuse Fonts (Pure English Pro - Weekly)
 
 on:
   schedule:
-    # 每周日 UTC 0点 (北京时间周日上午8点) 自动检查官方更新
+    # 每周日 UTC 0点 (北京时间周日上午8点) 自动巡检
     - cron: "0 0 * * 0"
   push:
     branches:
@@ -49,7 +49,6 @@ jobs:
       - name: Find Latest Successful Run
         id: find_run
         run: |
-          # 寻找最近一次成功的构建记录 ID，用于读取旧版本号
           ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
           echo "PREV_RUN_ID=$ID" >> "$GITHUB_ENV"
         env:
@@ -64,7 +63,7 @@ jobs:
           run-id: ${{ env.PREV_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compare Versions
+      - name: Version Check
         id: check
         run: |
           JB_PREV=$(cat jb_v.txt 2>/dev/null || echo "none")
@@ -92,7 +91,6 @@ jobs:
     name: Build Pure English Variants
     runs-on: ubuntu-latest
     needs: [check-updates]
-    # 只有检测到版本更新或手动强制触发时才启动昂贵的构建
     if: needs.check-updates.outputs.IS_UPDATED == 'true'
     strategy:
       fail-fast: false
@@ -110,19 +108,15 @@ jobs:
 
       - name: Build Source Fonts
         run: |
-          # 1. 编译 JetBrains Mono
           git clone --depth 1 "$JETBRAINS_GIT_URL" JB
           cd JB && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
           mkdir -p src/jb && cp -r JB/fonts/ttf/*.ttf src/jb/
-
           
-          # 2. 编译纯英文版 Maple Mono (确保移除所有中文参数)
           git clone --depth 1 "$MAPLE_GIT_URL" MP
           cd MP && pip install -r requirements.txt
           python build.py --normal --liga --hinted --ttf-only ${{ matrix.NERD.A }}
           cd ..
           mkdir -p src/mp
-          # 递归寻找所有生成的 TTF 文件并扁平化拷贝，确保 16 个字重都能被搜到
           find MP/fonts -name "*.ttf" -exec cp {} src/mp/ \;
 
       - name: Install Hard Tools
@@ -133,7 +127,6 @@ jobs:
       - name: Execute Fusion & Optimization
         run: |
           mkdir -p out
-          # 定义 16 个完整字重清单
           STYLES="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
           
           for S in $STYLES; do
@@ -141,29 +134,36 @@ jobs:
             J_SRC=$(find src/jb -iname "*$S.ttf" | head -n 1)
             [[ -z "$M_SRC" || -z "$J_SRC" ]] && continue
 
-
             echo "🔨 正在处理字重: $S"
-            # 路径净化手术：Simplify 减少节点，解决 Overlap 错误并提升渲染性能
             fontforge -lang=ff -c "Open(\"$M_SRC\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"c.ttf\");"
-            
-            # 执行融合
             fontforge "fuse_fonts.ff" "c.ttf" "$J_SRC" "$FUSION_ID-$S" "$FUSION_NAME" "$FUSION_NAME $S" "$S" "t.ttf" || true
             
             if [[ -f "t.ttf" ]]; then
-              # NL 模式物理剥离 GSUB 连字表
               if [[ "$LIGA_SUFFIX" == "NL" ]]; then
                 fontforge -lang=py -c "import fontforge; f=fontforge.open('t.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('t.ttf')"
               fi
-              
-              # 600 字宽校准 (核心对齐保障)
               ttx "t.ttf"
               sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "t.ttx"
               ttx -o "t.ttf" "t.ttx"
-              
               mv "t.ttf" "out/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-$S.ttf"
               rm -f "t.ttx" "c.ttf"
             fi
           done
+
+      - name: Prepare Release Info
+        run: |
+          # 修复三元运算符报错：在 Shell 中预处理描述文字
+          if [[ "${{ env.NERD_SUFFIX }}" == "NF" ]]; then
+            echo "NERD_DESC=含 Nerd Font 图标 (2.3MB+)" >> $GITHUB_ENV
+          else
+            echo "NERD_DESC=纯净英文 (300KB+)" >> $GITHUB_ENV
+          fi
+          
+          if [[ "${{ env.LIGA_SUFFIX }}" == "NL" ]]; then
+            echo "LIGA_DESC=禁用连字 (No Ligatures)" >> $GITHUB_ENV
+          else
+            echo "LIGA_DESC=自带连字" >> $GITHUB_ENV
+          fi
 
       - name: Package ZIP
         run: zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" out/*.ttf
@@ -180,7 +180,6 @@ jobs:
             - **无中文混入**：本项目仅包含 JetBrains 与 Maple 的英文、符号及图标。
             - **源版本**: JB(${{ env.JB_VER }}) MP(${{ env.MP_VER }})
             - **变体说明**:
-              - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_SUFFIX == 'NF' ? '含 Nerd Font 图标 (2.3MB+)' : '纯净英文 (300KB+)' }}
-              - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_SUFFIX == 'NL' ? '禁用连字 (No Ligatures)' : '自带连字' }}
+              - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_DESC }}
+              - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_DESC }}
             - **核心优化**: 强制 600 字宽锁定，执行路径 Simplify 净化。
-
