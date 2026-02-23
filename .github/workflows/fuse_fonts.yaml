@@ -1,8 +1,8 @@
-name: Fuse Fonts (Pro Edition - Weekly Auto)
+name: Fuse Fonts (Pure English Pro - Weekly)
 
 on:
   schedule:
-    # 每周日 UTC 0点 (北京时间周日上午8点) 自动运行
+    # 每周日 UTC 0点 (北京时间周日上午8点) 自动检查官方更新
     - cron: "0 0 * * 0"
   push:
     branches:
@@ -29,7 +29,7 @@ env:
   MAPLE_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/subframe7536/maple-font/releases/latest
   FUSION_NAME: JetBrains Maple Mono
   FUSION_ID: JetBrainsMapleMono
-  FUSION_DESCRIPTION: Pro-built font fused with JetBrains Mono & Maple Mono (Optimized Path)
+  FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono (No Chinese)
   FUSION_DEVELOPER: Space Time
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
       - name: Find Latest Successful Run
         id: find_run
         run: |
-          # 改进版：精准寻找最近一次成功的运行记录
+          # 寻找最近一次成功的构建记录 ID，用于读取旧版本号
           ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
           echo "PREV_RUN_ID=$ID" >> "$GITHUB_ENV"
         env:
@@ -67,8 +67,8 @@ jobs:
       - name: Compare Versions
         id: check
         run: |
-          JB_PREV=$(cat jetbrains_version.txt 2>/dev/null || echo "none")
-          MP_PREV=$(cat maple_version.txt 2>/dev/null || echo "none")
+          JB_PREV=$(cat jb_v.txt 2>/dev/null || echo "none")
+          MP_PREV=$(cat mp_v.txt 2>/dev/null || echo "none")
           JB_CUR=$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")
           MP_CUR=$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")
           
@@ -76,24 +76,23 @@ jobs:
             echo "IS_UPDATED=true" >> "$GITHUB_OUTPUT"
             echo "JB_VER=$JB_CUR" >> "$GITHUB_OUTPUT"
             echo "MP_VER=$MP_CUR" >> "$GITHUB_OUTPUT"
-            echo "$JB_CUR" > jetbrains_version.txt
-            echo "$MP_CUR" > maple_version.txt
+            echo "$JB_CUR" > jb_v.txt
+            echo "$MP_CUR" > mp_v.txt
           else
             echo "IS_UPDATED=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Current Release: JB($JB_CUR) MP($MP_CUR)"
 
-      - name: Save Version Data
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Versions
-          path: "*_version.txt"
+          path: "*_v.txt"
 
   fuse-fonts:
-    name: Build Variants
+    name: Build Pure English Variants
     runs-on: ubuntu-latest
     needs: [check-updates]
-    # 只有检测到更新或强制构建时才运行
+    # 只有检测到版本更新或手动强制触发时才启动昂贵的构建
     if: needs.check-updates.outputs.IS_UPDATED == 'true'
     strategy:
       fail-fast: false
@@ -104,89 +103,84 @@ jobs:
       JB_VER: ${{ needs.check-updates.outputs.JB_VER }}
       MP_VER: ${{ needs.check-updates.outputs.MP_VER }}
       NERD_SUFFIX: ${{ matrix.NERD.S }}
-      NERD_ARGS: ${{ matrix.NERD.A }}
       LIGA_SUFFIX: ${{ matrix.LIGA.S }}
     steps:
-      - name: Checkout Fusion Tool
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Prepare Source Fonts
+      - name: Build Source Fonts
         run: |
-          # 下载 JetBrains Mono
-          git clone --depth 1 "$JETBRAINS_GIT_URL" JB_SRC
-          cd JB_SRC && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
-          mkdir -p src/jb && cp -r JB_SRC/fonts/ttf/*.ttf src/jb/
+          # 1. 编译 JetBrains Mono
+          git clone --depth 1 "$JETBRAINS_GIT_URL" JB
+          cd JB && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
+          mkdir -p src/jb && cp -r JB/fonts/ttf/*.ttf src/jb/
+
           
-          # 构建 Maple Mono (根据 NERD 参数决定是否包含图标)
-          git clone --depth 1 "$MAPLE_GIT_URL" MP_SRC
-          cd MP_SRC && pip install -r requirements.txt
-          python build.py --normal --liga --hinted --ttf-only $NERD_ARGS
+          # 2. 编译纯英文版 Maple Mono (确保移除所有中文参数)
+          git clone --depth 1 "$MAPLE_GIT_URL" MP
+          cd MP && pip install -r requirements.txt
+          python build.py --normal --liga --hinted --ttf-only ${{ matrix.NERD.A }}
           cd ..
           mkdir -p src/mp
-          # 精准拷贝：只保留当前矩阵需要的字形
-          find MP_SRC/fonts -name "*.ttf" -exec cp {} src/mp/ \;
+          # 递归寻找所有生成的 TTF 文件并扁平化拷贝，确保 16 个字重都能被搜到
+          find MP/fonts -name "*.ttf" -exec cp {} src/mp/ \;
 
-      - name: Install Build Tools
+      - name: Install Hard Tools
         run: |
           sudo apt-get -y install fontforge zip
           pip install fonttools gftools
 
-      - name: Execute Fusion & Surgery
+      - name: Execute Fusion & Optimization
         run: |
-          mkdir -p out_ttf
+          mkdir -p out
+          # 定义 16 个完整字重清单
           STYLES="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
           
           for S in $STYLES; do
-            # 动态查找最匹配的源文件
-            M_PATH=$(find src/mp -iname "*$S.ttf" | head -n 1)
-            J_PATH=$(find src/jb -iname "*$S.ttf" | head -n 1)
+            M_SRC=$(find src/mp -iname "*$S.ttf" | head -n 1)
+            J_SRC=$(find src/jb -iname "*$S.ttf" | head -n 1)
+            [[ -z "$M_SRC" || -z "$J_SRC" ]] && continue
+
+
+            echo "🔨 正在处理字重: $S"
+            # 路径净化手术：Simplify 减少节点，解决 Overlap 错误并提升渲染性能
+            fontforge -lang=ff -c "Open(\"$M_SRC\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"c.ttf\");"
             
-            if [[ -n "$M_PATH" && -n "$J_PATH" ]]; then
-              echo "🚀 融合字重: $S (源: $(basename $M_PATH))"
-              
-              # 路径净化手术：Simplify 减少节点，解决 Overlap 内部错误
-              fontforge -lang=ff -c "Open(\"$M_PATH\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"cleaned.ttf\");"
-              
-              fontforge "fuse_fonts.ff" "cleaned.ttf" "$J_PATH" "$FUSION_ID-$S" "$FUSION_NAME" "$FUSION_NAME $S" "$S" "temp.ttf" || true
-              
-              if [[ -f "temp.ttf" ]]; then
-                # NL 模式物理剥离连字表
-                if [[ "$LIGA_SUFFIX" == "NL" ]]; then
-                  fontforge -lang=py -c "import fontforge; f=fontforge.open('temp.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('temp.ttf')"
-                fi
-                
-                # 名义字宽校准为 600
-                ttx "temp.ttf"
-                sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "temp.ttx"
-                ttx -o "temp.ttf" "temp.ttx"
-                
-                mv "temp.ttf" "out_ttf/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-$S.ttf"
-                rm -f "temp.ttx" "cleaned.ttf"
+            # 执行融合
+            fontforge "fuse_fonts.ff" "c.ttf" "$J_SRC" "$FUSION_ID-$S" "$FUSION_NAME" "$FUSION_NAME $S" "$S" "t.ttf" || true
+            
+            if [[ -f "t.ttf" ]]; then
+              # NL 模式物理剥离 GSUB 连字表
+              if [[ "$LIGA_SUFFIX" == "NL" ]]; then
+                fontforge -lang=py -c "import fontforge; f=fontforge.open('t.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('t.ttf')"
               fi
+              
+              # 600 字宽校准 (核心对齐保障)
+              ttx "t.ttf"
+              sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "t.ttx"
+              ttx -o "t.ttf" "t.ttx"
+              
+              mv "t.ttf" "out/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-$S.ttf"
+              rm -f "t.ttx" "c.ttf"
             fi
           done
 
-      - name: Zip Artifacts
-        run: zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" out_ttf/*.ttf
+      - name: Package ZIP
+        run: zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" out/*.ttf
 
-      - name: Create GitHub Release
+      - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.FUSION_ID }}-${{ env.NERD_SUFFIX }}-${{ env.LIGA_SUFFIX }}.zip"
           tag_name: "v1.0.0-Build-${{ github.run_number }}"
-          name: "JetBrainsMaple Full-Pack #${{ github.run_number }}"
+          name: "JetBrainsMaple Pure-English #${{ github.run_number }}"
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            ## ✅ 自动构建完成 (终极 Pro 版)
-            - **频率**: 每周日定时巡检更新
-            - **JetBrains 源**: ${{ env.JB_VER }}
-            - **Maple 源**: ${{ env.MP_VER }}
+            ## ✅ 纯英文编程增强版构建完成
+            - **无中文混入**：本项目仅包含 JetBrains 与 Maple 的英文、符号及图标。
+            - **源版本**: JB(${{ env.JB_VER }}) MP(${{ env.MP_VER }})
             - **变体说明**:
-              - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_SUFFIX == 'NF' && 'Nerd Font (含4000+图标)' || 'Pure (不含图标)' }}
-              - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_SUFFIX == 'NL' && 'No Ligatures (禁用连字)' || 'Default (保留连字)' }}
-            - **核心优化**: 统一 600 字宽锁定，执行路径 Simplify 净化。
+              - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_SUFFIX == 'NF' ? '含 Nerd Font 图标 (2.3MB+)' : '纯净英文 (300KB+)' }}
+              - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_SUFFIX == 'NL' ? '禁用连字 (No Ligatures)' : '自带连字' }}
+            - **核心优化**: 强制 600 字宽锁定，执行路径 Simplify 净化。
+
