@@ -3,7 +3,7 @@
 </br>
 
 ## 自我介绍
-**JetBrains Maple Mono**[JetBrains Mono]([https://github.com/JetBrains/JetBrainsMono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono))构建纯英文字体
+**JetBrains Maple Mono**([JetBrains Maple Mono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono))构建纯英文字体
 
 * 适用平台: Any
 
