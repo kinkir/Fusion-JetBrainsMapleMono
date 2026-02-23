@@ -2,8 +2,7 @@
 <h3 align="center">- JetBrains Mono + Maple Mono -</h3>
 </br>
 
-## 自我介绍
-**JetBrains Maple Mono**([JetBrains Maple Mono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono))构建纯英文字体
+基于**JetBrains Maple Mono**([JetBrains Maple Mono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono))构建纯英文字体
 
 * 适用平台: Any
 
