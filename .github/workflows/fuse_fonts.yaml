@@ -29,7 +29,7 @@ env:
   MAPLE_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/subframe7536/maple-font/releases/latest
   FUSION_NAME: JetBrains Maple Mono
   FUSION_ID: JetBrainsMapleMono
-  FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono (No Chinese)
+  FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono (Simplified Filenames)
   FUSION_DEVELOPER: Space Time
 
 jobs:
@@ -108,26 +108,20 @@ jobs:
 
       - name: Build Source Fonts
         run: |
-          # 1. 编译 JetBrains Mono
           git clone --depth 1 "$JETBRAINS_GIT_URL" JB
           cd JB && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
           mkdir -p src/jb && cp -r JB/fonts/ttf/*.ttf src/jb/
           
-          # 2. 编译纯英文版 Maple Mono
           git clone --depth 1 "$MAPLE_GIT_URL" MP
           cd MP && pip install -r requirements.txt
           python build.py --normal --liga --hinted --ttf-only ${{ matrix.NERD.A }}
           cd ..
           mkdir -p src/mp
           
-          # 【核心修复】：根据 NF 需求，从特定输出文件夹精准拷贝
-          # 这样 src/mp 里就永远只有一套目标文件，不会出现混淆
           if [[ "${{ matrix.NERD.S }}" == "NF" ]]; then
-            # 如果是 NF 模式，优先进入 NF 目录拷贝
             find MP/fonts -type d -name "NF*" -exec cp -r {}/src/. src/mp/ 2>/dev/null || \
             find MP/fonts -type f -name "*NF*.ttf" -exec cp {} src/mp/ \;
           else
-            # 如果是 XX 模式，避开所有带 NF 字样的目录和文件
             find MP/fonts -type f -name "*.ttf" ! -name "*NF*" -exec cp {} src/mp/ \;
           fi
           echo "--- Maple 源文件列表 ---"
@@ -148,7 +142,6 @@ jobs:
             J_SRC=$(find src/jb -iname "*$S.ttf" | head -n 1)
             [[ -z "$M_SRC" || -z "$J_SRC" ]] && continue
 
-            # 打印源文件大小以备检查 (2.3M 为正常，300K 为图标丢失)
             echo "🔨 正在处理字重: $S | 源文件大小: $(du -sh "$M_SRC" | cut -f1)"
             
             fontforge -lang=ff -c "Open(\"$M_SRC\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"c.ttf\");"
@@ -161,7 +154,9 @@ jobs:
               ttx "t.ttf"
               sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "t.ttx"
               ttx -o "t.ttf" "t.ttx"
-              mv "t.ttf" "out/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-$S.ttf"
+              
+              # 【核心修复】：移动并重命名为简洁格式，不再携带 NF/NL 后缀
+              mv "t.ttf" "out/${FUSION_ID}-$S.ttf"
               rm -f "t.ttx" "c.ttf"
             fi
           done
@@ -197,4 +192,4 @@ jobs:
             - **变体说明**:
               - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_DESC }}
               - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_DESC }}
-            - **核心优化**: 强制 600 字宽锁定，执行路径 Simplify 净化。
+            - **核心优化**: 强制 600 字宽锁定，执行路径 Simplify 净化，包内字体文件名已精简。
