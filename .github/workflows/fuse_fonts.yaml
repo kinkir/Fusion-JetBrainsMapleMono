@@ -1,4 +1,4 @@
-name: Fuse Fonts (Pure English 600)
+name: Fuse Fonts (Full Weights & Zipped Release)
 
 on:
   push:
@@ -12,7 +12,6 @@ on:
         default: false
         required: false
 
-# 核心修复 1：声明权限，确保 Fork 仓库也能正常运行 gh 命令和发布 Release
 permissions:
   contents: write
   actions: read
@@ -28,74 +27,33 @@ env:
   FUSION_ID: JetBrainsMapleMono
   FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono
   FUSION_DEVELOPER: Space Time
-  FUSION_URL: ${{ github.server_url }}/${{ github.repository }}
 
 jobs:
-  check-release-updates:
-    name: Check Release Updates
+  check-updates:
+    name: Check Updates
     runs-on: ubuntu-latest
     outputs:
-      IS_RELEASE_UPDATED: ${{ steps.check.outputs.IS_RELEASE_UPDATED }}
-      JETBRAINS_LATEST_VERSION: ${{ steps.check.outputs.JETBRAINS_LATEST_VERSION }}
-      MAPLE_LATEST_VERSION: ${{ steps.check.outputs.MAPLE_LATEST_VERSION }}
+      JB_VER: ${{ steps.check.outputs.JB_VER }}
+      MP_VER: ${{ steps.check.outputs.MP_VER }}
     steps:
-      - name: Fetch Git Folder
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: .git
-      - name: Get Previous Run Id
-        id: get-id
-        run: |
-          # 核心修复 2：将环境变量 GH_TOKEN 映射到系统内置 Token
-          PREV_ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
-          echo "PREV_RUN_ID=$PREV_ID" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download Previous Versions
-        if: env.PREV_RUN_ID != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: Versions
-          run-id: ${{ env.PREV_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Check Updates
+      - name: Fetch Updates
         id: check
         run: |
           JB_CUR="$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
           MP_CUR="$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
-          echo "IS_RELEASE_UPDATED=true" >> "$GITHUB_OUTPUT"
-          echo "JETBRAINS_LATEST_VERSION=$JB_CUR" >> "$GITHUB_OUTPUT"
-          echo "MAPLE_LATEST_VERSION=$MP_CUR" >> "$GITHUB_OUTPUT"
-          echo "$JB_CUR" > jetbrains_version.txt
-          echo "$MP_CUR" > maple_version.txt
-      - name: Upload Versions
-        uses: actions/upload-artifact@v4
-        with:
-          name: Versions
-          path: "*_version.txt"
-
-  check-commit-updates:
-    name: Check Commit Updates
-    runs-on: ubuntu-latest
-    outputs:
-      IS_COMMIT_UPDATED: ${{ steps.check.outputs.IS_COMMIT_UPDATED }}
-    steps:
-      - name: Check Commit Updates
-        run: echo "IS_COMMIT_UPDATED=true" >> "$GITHUB_OUTPUT"
+          echo "JB_VER=$JB_CUR" >> "$GITHUB_OUTPUT"
+          echo "MP_VER=$MP_CUR" >> "$GITHUB_OUTPUT"
 
   fuse-fonts:
-    name: Fuse Fonts
+    name: Build Fonts
     runs-on: ubuntu-latest
-    needs: [check-release-updates, check-commit-updates]
+    needs: [check-updates]
     strategy:
       fail-fast: false
       matrix:
         NERD: [{S: NF, A: --nerd-font}, {S: XX, A: --no-nerd-font}]
         LIGA: [{S: NL}, {S: XX}]
     env:
-      JETBRAINS_LATEST_VERSION: ${{ needs.check-release-updates.outputs.JETBRAINS_LATEST_VERSION }}
-      MAPLE_LATEST_VERSION: ${{ needs.check-release-updates.outputs.MAPLE_LATEST_VERSION }}
       NERD_SUFFIX: ${{ matrix.NERD.S }}
       NERD_ARGS: ${{ matrix.NERD.A }}
       LIGA_SUFFIX: ${{ matrix.LIGA.S }}
@@ -120,49 +78,57 @@ jobs:
           cd maple-font && pip install -r requirements.txt
           python build.py --normal --liga --hinted --ttf-only $NERD_ARGS
           cd ..
-          
-          # 核心修复 3：动态寻找生成的 TTF 文件，不再写死 -CN- 路径
           mkdir -p source-fonts/maple
           find maple-font/fonts -name "*.ttf" -exec cp {} source-fonts/maple/ \;
 
       - name: Install Tools
-        run: |
-          sudo apt-get -y install fontforge
-          pip install foundrytools-cli fonttools gftools
+        run: sudo apt-get -y install fontforge zip && pip install foundrytools-cli fonttools gftools
 
-      - name: Execute Fusion
+      - name: Execute Fusion & Cleanup Outlines
         run: |
           mkdir -p fused-final
-          for STYLE in "Thin" "Regular" "Bold"; do
-            # 动态匹配 Maple 和 JetBrains 源文件
-            MAPLE_SRC=$(find source-fonts/maple -name "*$STYLE.ttf" | head -n 1)
-            JB_SRC=$(find source-fonts/jetbrains -name "*$STYLE.ttf" | head -n 1)
+          # 定义全字重列表
+          STYLE_LIST="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
+          
+          for STYLE in $STYLE_LIST; do
+            MAPLE_SRC=$(find source-fonts/maple -iname "*$STYLE.ttf" | head -n 1)
+            JB_SRC=$(find source-fonts/jetbrains -iname "*$STYLE.ttf" | head -n 1)
             
-            if [[ -z "$MAPLE_SRC" || -z "$JB_SRC" ]]; then
-               echo "⚠️ 跳过 $STYLE (源文件缺失)"
-               continue
-            fi
+            if [[ -z "$MAPLE_SRC" || -z "$JB_SRC" ]]; then continue; fi
 
-            echo "正在融合: $STYLE..."
-            # 容错运行，忽略某些字形的 overlap 错误
-            fontforge "fuse_fonts.ff" "$MAPLE_SRC" "$JB_SRC" "$FUSION_ID-$STYLE" "$FUSION_NAME" "$FUSION_NAME $STYLE" "$STYLE" "temp.ttf" || true
+            echo "🚀 正在处理: $STYLE"
+            # 注入额外脚本命令：清理路径，减少 overlap 错误
+            fontforge -lang=ff -c "Open(\"$MAPLE_SRC\"); Simplify(); CorrectDirection(); RoundToInt(); Save(\"cleaned_maple.ttf\");"
+            
+            fontforge "fuse_fonts.ff" "cleaned_maple.ttf" "$JB_SRC" "$FUSION_ID-$STYLE" "$FUSION_NAME" "$FUSION_NAME $STYLE" "$STYLE" "temp.ttf" || true
             
             if [[ -f "temp.ttf" ]]; then
-              # 后处理：强制 600 字宽
+              # 后处理：强制 600 字宽并再次清理连字（如果需要）
+              if [[ "$LIGA_SUFFIX" == "NL" ]]; then
+                fontforge -lang=py -c "import fontforge; f=fontforge.open('temp.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('temp.ttf')"
+              fi
               ttx "temp.ttf"
               sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "temp.ttx"
               ttx -o "temp.ttf" "temp.ttx"
               
-              mv "temp.ttf" "fused-final/$FUSION_ID-$NERD_SUFFIX-$LIGA_SUFFIX-$STYLE.ttf"
-              rm -f "temp.ttx"
+              mv "temp.ttf" "fused-final/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-${STYLE}.ttf"
+              rm -f "temp.ttx" "cleaned_maple.ttf"
             fi
           done
+
+      - name: Package Fonts
+        run: |
+          zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" fused-final/*.ttf
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: fused-final/*.ttf
+          files: "${{ env.FUSION_ID }}-${{ env.NERD_SUFFIX }}-${{ env.LIGA_SUFFIX }}.zip"
           tag_name: "v1.0.0-Build-${{ github.run_number }}"
-          name: "Release v1.0.0 (Build ${{ github.run_number }})"
+          name: "JetBrainsMaple Build ${{ github.run_number }}"
           token: ${{ secrets.GITHUB_TOKEN }}
-          body: "Fused JetBrains Mono & Maple Mono (English Only, Width 600)"
+          body: |
+            ## 🎨 字体合并包已生成 (全字重版本)
+            - **变体标识**: ${{ env.NERD_SUFFIX }} (Nerd Font), ${{ env.LIGA_SUFFIX }} (No Ligatures)
+            - **字宽策略**: 强制等宽 600
+            - **包含字重**: Thin 至 ExtraBold 全部样式
