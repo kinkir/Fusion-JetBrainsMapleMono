@@ -1,134 +1,140 @@
-name: Fuse Fonts (Full Weights & Zipped Release)
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-on:
-  push:
-    branches:
-      - "**"
-  workflow_dispatch:
-    inputs:
-      FORCE:
-        description: Skip checking updates & Force to fuse
-        type: boolean
-        default: false
-        required: false
+import glob
+import os
+import sys
+import shutil
+from fontTools import merge, ttLib
 
-permissions:
-  contents: write
-  actions: read
-  issues: write
+# ==========================================
+# 配置参数
+# ==========================================
+BUILD_FONTS_DIR = "MiJBMapleMonoHalfNL"
+FONT_NAME_BASE = "MiJBMapleMonoHalf"
 
-env:
-  FORCE: ${{ github.event.inputs.FORCE }}
-  JETBRAINS_GIT_URL: ${{ github.server_url }}/JetBrains/JetBrainsMono.git
-  JETBRAINS_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/JetBrains/JetBrainsMono/releases/latest
-  MAPLE_GIT_URL: ${{ github.server_url }}/subframe7536/maple-font.git
-  MAPLE_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/subframe7536/maple-font/releases/latest
-  FUSION_NAME: JetBrains Maple Mono
-  FUSION_ID: JetBrainsMapleMono
-  FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono
-  FUSION_DEVELOPER: Space Time
+# 【严格半角标准数值】：1:2 完美比例
+HALF_WIDTH_12 = 528
+FULL_WIDTH_12 = 1056
 
-jobs:
-  check-updates:
-    name: Check Updates
-    runs-on: ubuntu-latest
-    outputs:
-      JB_VER: ${{ steps.check.outputs.JB_VER }}
-      MP_VER: ${{ steps.check.outputs.MP_VER }}
-    steps:
-      - name: Fetch Updates
-        id: check
-        run: |
-          JB_CUR="$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
-          MP_CUR="$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
-          echo "JB_VER=$JB_CUR" >> "$GITHUB_OUTPUT"
-          echo "MP_VER=$MP_CUR" >> "$GITHUB_OUTPUT"
+def main():
+    print(f"=== 开始字体后处理 (Half版 - 物理间距终极校准) ===")
+    process_all_fonts()
+    print("=== 字体后处理完成 ===")
 
-  fuse-fonts:
-    name: Build Fonts
-    runs-on: ubuntu-latest
-    needs: [check-updates]
-    strategy:
-      fail-fast: false
-      matrix:
-        NERD: [{S: NF, A: --nerd-font}, {S: XX, A: --no-nerd-font}]
-        LIGA: [{S: NL}, {S: XX}]
-    env:
-      NERD_SUFFIX: ${{ matrix.NERD.S }}
-      NERD_ARGS: ${{ matrix.NERD.A }}
-      LIGA_SUFFIX: ${{ matrix.LIGA.S }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+def process_all_fonts():
+    """扫描目录，识别临时文件并自动命名成品"""
+    eng_files = glob.glob(f"{BUILD_FONTS_DIR}/*-eng.ttf")
+    if not eng_files:
+        print(f"⚠️ 未在 {BUILD_FONTS_DIR} 发现待处理的英文字体碎片")
+        return
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+    for eng_file in eng_files:
+        basename = os.path.basename(eng_file)
+        # 提取 Style (如 Bold, Regular 等)
+        parts = basename.replace("-eng.ttf", "").split("-")
+        if len(parts) >= 2:
+            old_variant = parts[0]
+            font_style = "-".join(parts[1:])
 
-      - name: Build Source Fonts
-        run: |
-          # 克隆并构建 JetBrains
-          git clone --depth 1 "$JETBRAINS_GIT_URL" JetBrainsMono
-          cd JetBrainsMono && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
-          mkdir -p source-fonts/jetbrains && cp -r JetBrainsMono/fonts/ttf/* source-fonts/jetbrains/
-          
-          # 克隆并构建 Maple (纯英文模式)
-          git clone --depth 1 "$MAPLE_GIT_URL" maple-font
-          cd maple-font && pip install -r requirements.txt
-          python build.py --normal --liga --hinted --ttf-only $NERD_ARGS
-          cd ..
-          mkdir -p source-fonts/maple
-          find maple-font/fonts -name "*.ttf" -exec cp {} source-fonts/maple/ \;
+            # 智能判断：如果原文件带 NL，成品也补上 NL
+            current_base = FONT_NAME_BASE
+            if old_variant.endswith("NL") and not current_base.endswith("NL"):
+                current_base = f"{FONT_NAME_BASE}NL"
 
-      - name: Install Tools
-        run: sudo apt-get -y install fontforge zip && pip install foundrytools-cli fonttools gftools
+            process_font(old_variant, current_base, font_style)
 
-      - name: Execute Fusion & Cleanup Outlines
-        run: |
-          mkdir -p fused-final
-          # 定义全字重列表
-          STYLE_LIST="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
-          
-          for STYLE in $STYLE_LIST; do
-            MAPLE_SRC=$(find source-fonts/maple -iname "*$STYLE.ttf" | head -n 1)
-            JB_SRC=$(find source-fonts/jetbrains -iname "*$STYLE.ttf" | head -n 1)
-            
-            if [[ -z "$MAPLE_SRC" || -z "$JB_SRC" ]]; then continue; fi
+def process_font(old_variant, new_variant, font_style):
+    """处理单个字体单元：合并 -> 物理宽度暴力强制校准"""
+    use_hinting = "--no-hinting" not in sys.argv
 
-            echo "🚀 正在处理: $STYLE"
-            # 注入额外脚本命令：清理路径，减少 overlap 错误
-            fontforge -lang=ff -c "Open(\"$MAPLE_SRC\"); Simplify(); CorrectDirection(); RoundToInt(); Save(\"cleaned_maple.ttf\");"
-            
-            fontforge "fuse_fonts.ff" "cleaned_maple.ttf" "$JB_SRC" "$FUSION_ID-$STYLE" "$FUSION_NAME" "$FUSION_NAME $STYLE" "$STYLE" "temp.ttf" || true
-            
-            if [[ -f "temp.ttf" ]]; then
-              # 后处理：强制 600 字宽并再次清理连字（如果需要）
-              if [[ "$LIGA_SUFFIX" == "NL" ]]; then
-                fontforge -lang=py -c "import fontforge; f=fontforge.open('temp.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('temp.ttf')"
-              fi
-              ttx "temp.ttf"
-              sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "temp.ttx"
-              ttx -o "temp.ttf" "temp.ttx"
-              
-              mv "temp.ttf" "fused-final/${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}-${STYLE}.ttf"
-              rm -f "temp.ttx" "cleaned_maple.ttf"
-            fi
-          done
+    eng_path = f"{BUILD_FONTS_DIR}/{old_variant}-{font_style}-eng.ttf"
+    zh_path = f"{BUILD_FONTS_DIR}/{old_variant}-{font_style}-zh.ttf"
+    output_path = f"{BUILD_FONTS_DIR}/{new_variant}-{font_style}.ttf"
 
-      - name: Package Fonts
-        run: |
-          zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" fused-final/*.ttf
+    if not os.path.exists(eng_path) or not os.path.exists(zh_path):
+        return
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: "${{ env.FUSION_ID }}-${{ env.NERD_SUFFIX }}-${{ env.LIGA_SUFFIX }}.zip"
-          tag_name: "v1.0.0-Build-${{ github.run_number }}"
-          name: "JetBrainsMaple Build ${{ github.run_number }}"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body: |
-            ## 🎨 字体合并包已生成 (全字重版本)
-            - **变体标识**: ${{ env.NERD_SUFFIX }} (Nerd Font), ${{ env.LIGA_SUFFIX }} (No Ligatures)
-            - **字宽策略**: 强制等宽 600
-            - **包含字重**: Thin 至 ExtraBold 全部样式
+    hinted_eng_path = eng_path.replace(".ttf", "-hinted.ttf")
+
+    # 1. 字体微调 (仅当开启时)
+    if use_hinting:
+        try:
+            print(f"执行微调: {os.path.basename(eng_path)}")
+            os.system(f"ttfautohint --no-info --windows-compatibility --symbol {eng_path} {hinted_eng_path}")
+        except:
+            shutil.copy(eng_path, hinted_eng_path)
+    else:
+        shutil.copy(eng_path, hinted_eng_path)
+
+    # 2. 核心合并与空间校准 (在这里解决间距和报错问题)
+    eng_to_merge = hinted_eng_path if os.path.exists(hinted_eng_path) else eng_path
+    apply_compact_surgery(eng_to_merge, zh_path, output_path, font_style)
+
+    # 3. 清理现场
+    cleanup(old_variant, font_style)
+
+def apply_compact_surgery(eng_path, zh_path, output_path, style):
+    """利用内存对象直接合并并强制物理对齐每一个字形"""
+    try:
+        print(f"空间紧凑化手术 -> {os.path.basename(output_path)}")
+
+        # A. 预处理：删除引起报错或导致宽度计算混乱的干扰表
+        for p in [eng_path, zh_path]:
+            f = ttLib.TTFont(p)
+            for table in ["vhea", "vmtx", "gasp", "DSIG"]:
+                if table in f: del f[table]
+            f.save(p)
+
+        # B. 内存级合并 (避开 XML 转换)
+        merger = merge.Merger()
+        font = merger.merge([eng_path, zh_path])
+
+        # C. 【新增核心逻辑】：强制修正 hmtx 表 (物理宽度)
+        # 这是消灭 Sublime Text 间距的终极方案
+        if 'hmtx' in font:
+            hmtx = font['hmtx']
+            for glyph_name in hmtx.metrics:
+                width, lsb = hmtx.metrics[glyph_name]
+                # 如果宽度接近或大于全角(800+)，视为全角，否则一律拉回半角
+                if width > 800:
+                    hmtx.metrics[glyph_name] = (FULL_WIDTH_12, lsb)
+                else:
+                    hmtx.metrics[glyph_name] = (HALF_WIDTH_12, lsb)
+
+        # D. 元数据深度修正 (OS/2 表)
+        if 'OS/2' in font:
+            os2 = font['OS/2']
+            os2.xAvgCharWidth = HALF_WIDTH_12
+            os2.panose.bFamilyType = 2
+            os2.panose.bSerifStyle = 11
+            os2.panose.bProportion = 9  # 强制 Monospaced 声明
+
+            # 修正粗斜体样式位，确保系统识别正确
+            if "Bold" in style: os2.fsSelection |= (1 << 5)
+            if "Italic" in style: os2.fsSelection |= (1 << 0)
+            if not ("Bold" in style or "Italic" in style): os2.fsSelection |= (1 << 6)
+
+        # E. post 表：底层等宽标志
+        if 'post' in font:
+            font['post'].isFixedPitch = 1
+
+        # F. 清理冗余版权信息
+        if 'name' in font:
+            font['name'].names = [n for n in font['name'].names if not (n.nameID == 0 and ("Plemol" in n.toUnicode()))]
+
+        # 保存直接生成最终成品
+        font.save(output_path)
+        print(f"✅ 物理空间校准成功")
+
+    except Exception as e:
+        print(f"❌ 修正失败 ({os.path.basename(output_path)}): {e}")
+
+def cleanup(variant, style):
+    targets = [f"{variant}-{style}-eng.ttf", f"{variant}-{style}-eng-hinted.ttf", f"{variant}-{style}-zh.ttf"]
+    for t in targets:
+        p = os.path.join(BUILD_FONTS_DIR, t)
+        if os.path.exists(p): os.remove(p)
+
+if __name__ == "__main__":
+    main()
