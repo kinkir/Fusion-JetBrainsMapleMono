@@ -1,13 +1,11 @@
-name: Fuse Fonts (Pure English Pro - Weekly)
+name: Fuse Fonts (Pure English NF)
 
 on:
   schedule:
-    # 每周日 UTC 0点 (北京时间周日上午8点) 自动巡检
-    - cron: "0 0 * * 0"
+    - cron: "0 20 * * 0"
   push:
     branches:
-      - "main"
-      - "master"
+      - "**"
   workflow_dispatch:
     inputs:
       FORCE:
@@ -16,180 +14,380 @@ on:
         default: false
         required: false
 
-permissions:
-  contents: write
-  actions: read
-  issues: write
-
 env:
   FORCE: ${{ github.event.inputs.FORCE }}
   JETBRAINS_GIT_URL: ${{ github.server_url }}/JetBrains/JetBrainsMono.git
   JETBRAINS_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/JetBrains/JetBrainsMono/releases/latest
+  JETBRAINS_COPYRIGHT: Copyright 2020 The JetBrains Mono Project Authors (${{ github.server_url }}/JetBrains/JetBrainsMono)
   MAPLE_GIT_URL: ${{ github.server_url }}/subframe7536/maple-font.git
   MAPLE_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/subframe7536/maple-font/releases/latest
+  MAPLE_COPYRIGHT: Copyright 2022 The Maple Mono Project Authors (${{ github.server_url }}/subframe7536/maple-font)
   FUSION_NAME: JetBrains Maple Mono
   FUSION_ID: JetBrainsMapleMono
-  FUSION_DESCRIPTION: Pure English font fused with JetBrains Mono & Maple Mono (Simplified Filenames)
+  FUSION_DESCRIPTION: The pure English NF font fused with JetBrains Mono & Maple Mono
   FUSION_DEVELOPER: Space Time
+  FUSION_URL: ${{ github.server_url }}/${{ github.repository }}
+  FUSION_COPYRIGHT: Copyright 2025 Space Time (${{ github.server_url }}/${{ github.repository }})
+  FUSION_LICENSE: "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org"
 
 jobs:
-  check-updates:
-    name: Check Version Updates
+  update-run-time:
+    name: Update Run Time
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Fetch Git Folder & Readme
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .git
+            README.md
+
+      - name: Get Current Time
+        run: |
+          UTC_TIME="$(date -u "+%Y-%m-%d %H:%M:%S")"
+          BJT_TIME="$(TZ="Asia/Shanghai" date "+%Y-%m-%d %H:%M:%S")"
+
+          echo "UTC_TIME="$UTC_TIME"" >> "$GITHUB_ENV"
+          echo "BJT_TIME="$BJT_TIME"" >> "$GITHUB_ENV"
+
+      - name: Update Readme
+        run: |
+          sed -i "s|\(<!--UTC_TIME-->\).*\(<!--UTC_TIME-->\)|\1$UTC_TIME\2|g" "README.md"
+          sed -i "s|\(<!--BJT_TIME-->\).*\(<!--BJT_TIME-->\)|\1$BJT_TIME\2|g" "README.md"
+
+      - name: Commit Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "README.md"
+          git commit -m "Update Run Time: $BJT_TIME"
+          git pull --rebase "origin" "main"
+          git push
+
+  check-release-updates:
+    name: Check Release Updates
     runs-on: ubuntu-latest
     outputs:
-      IS_UPDATED: ${{ steps.check.outputs.IS_UPDATED }}
-      JB_VER: ${{ steps.check.outputs.JB_VER }}
-      MP_VER: ${{ steps.check.outputs.MP_VER }}
+      IS_RELEASE_UPDATED: ${{ steps.check-release-updates.outputs.IS_RELEASE_UPDATED }}
+      JETBRAINS_LATEST_VERSION: ${{ steps.check-release-updates.outputs.JETBRAINS_LATEST_VERSION }}
+      MAPLE_LATEST_VERSION: ${{ steps.check-release-updates.outputs.MAPLE_LATEST_VERSION }}
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Fetch Git Folder
+        uses: actions/checkout@v6
         with:
           sparse-checkout: .git
-          
-      - name: Find Latest Successful Run
-        id: find_run
-        run: |
-          ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
-          echo "PREV_RUN_ID=$ID" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Previous Data
-        if: env.PREV_RUN_ID != ''
-        uses: actions/download-artifact@v4
+      - name: Get Previous Run Id
+        run: |
+          PREV_RUN_ID="$(gh run list --workflow "$GITHUB_WORKFLOW" --limit 2 --json "databaseId" --jq ".[1].databaseId")"
+          echo "PREV_RUN_ID="$PREV_RUN_ID"" >> "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Download Previous Versions
         continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           name: Versions
           run-id: ${{ env.PREV_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_TOKEN }}
 
-      - name: Version Check
-        id: check
+      - name: Check Release Updates
+        id: check-release-updates
         run: |
-          JB_PREV=$(cat jb_v.txt 2>/dev/null || echo "none")
-          MP_PREV=$(cat mp_v.txt 2>/dev/null || echo "none")
-          JB_CUR=$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")
-          MP_CUR=$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")
-          
-          if [[ "$FORCE" == "true" || "$JB_PREV" != "$JB_CUR" || "$MP_PREV" != "$MP_CUR" ]]; then
-            echo "IS_UPDATED=true" >> "$GITHUB_OUTPUT"
-            echo "JB_VER=$JB_CUR" >> "$GITHUB_OUTPUT"
-            echo "MP_VER=$MP_CUR" >> "$GITHUB_OUTPUT"
-            echo "$JB_CUR" > jb_v.txt
-            echo "$MP_CUR" > mp_v.txt
+          JETBRAINS_PREV_VERSION="$(cat "jetbrains_version.txt" 2> "/dev/null" || echo "")"
+          MAPLE_PREV_VERSION="$(cat "maple_version.txt" 2> "/dev/null" || echo "")"
+          JETBRAINS_LATEST_VERSION="$(curl -s "$JETBRAINS_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
+          MAPLE_LATEST_VERSION="$(curl -s "$MAPLE_LATEST_RELEASE_API_URL" | jq -r ".tag_name")"
+
+          if [[ "$FORCE" == "true" || ("$JETBRAINS_PREV_VERSION" != "$JETBRAINS_LATEST_VERSION" || "$MAPLE_PREV_VERSION" != "$MAPLE_LATEST_VERSION") && \
+          "$JETBRAINS_LATEST_VERSION" != "null" && "$MAPLE_LATEST_VERSION" != "null" ]]; then
+            echo "IS_RELEASE_UPDATED=true" >> "$GITHUB_OUTPUT"
+            echo "JETBRAINS_LATEST_VERSION="$JETBRAINS_LATEST_VERSION"" >> "$GITHUB_OUTPUT"
+            echo "MAPLE_LATEST_VERSION="$MAPLE_LATEST_VERSION"" >> "$GITHUB_OUTPUT"
+            echo "$JETBRAINS_LATEST_VERSION" > "jetbrains_version.txt"
+            echo "$MAPLE_LATEST_VERSION" > "maple_version.txt"
           else
-            echo "IS_UPDATED=false" >> "$GITHUB_OUTPUT"
+            echo "IS_RELEASE_UPDATED=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload Artifacts
+      - name: Upload Latest Versions
         uses: actions/upload-artifact@v4
         with:
           name: Versions
-          path: "*_v.txt"
+          path: "*_version.txt"
+
+  check-commit-updates:
+    name: Check Commit Updates
+    runs-on: ubuntu-latest
+    outputs:
+      IS_COMMIT_UPDATED: ${{ steps.check-commit-updates.outputs.IS_COMMIT_UPDATED }}
+      JETBRAINS_LATEST_HASH: ${{ steps.check-commit-updates.outputs.JETBRAINS_LATEST_HASH }}
+      MAPLE_LATEST_HASH: ${{ steps.check-commit-updates.outputs.MAPLE_LATEST_HASH }}
+
+    steps:
+      - name: Fetch Git Folder
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .git
+
+      - name: Get Previous Run Id
+        run: |
+          PREV_RUN_ID="$(gh run list --workflow "$GITHUB_WORKFLOW" --limit 2 --json "databaseId" --jq ".[1].databaseId")"
+          echo "PREV_RUN_ID="$PREV_RUN_ID"" >> "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Download Previous Hashes
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: Hashes
+          run-id: ${{ env.PREV_RUN_ID }}
+          github-token: ${{ secrets.GH_TOKEN }}
+
+      - name: Check Commit Updates
+        id: check-commit-updates
+        run: |
+          JETBRAINS_PREV_HASH="$(cat "jetbrains_hash.txt" 2> "/dev/null" || echo "")"
+          MAPLE_PREV_HASH="$(cat "maple_hash.txt" 2> "/dev/null" || echo "")"
+          JETBRAINS_LATEST_HASH="$(git ls-remote --heads "$JETBRAINS_GIT_URL" "master" | cut "-c1-7")"
+          MAPLE_LATEST_HASH="$(git ls-remote --heads "$MAPLE_GIT_URL" "variable" | cut "-c1-7")"
+
+          if [[ "$FORCE" == "true" || "$JETBRAINS_PREV_HASH" != "$JETBRAINS_LATEST_HASH" || "$MAPLE_PREV_HASH" != "$MAPLE_LATEST_HASH" ]]; then
+            echo "IS_COMMIT_UPDATED=true" >> "$GITHUB_OUTPUT"
+            echo "JETBRAINS_LATEST_HASH="$JETBRAINS_LATEST_HASH"" >> "$GITHUB_OUTPUT"
+            echo "MAPLE_LATEST_HASH="$MAPLE_LATEST_HASH"" >> "$GITHUB_OUTPUT"
+            echo "$JETBRAINS_LATEST_HASH" > "jetbrains_hash.txt"
+            echo "$MAPLE_LATEST_HASH" > "maple_hash.txt"
+          else
+            echo "IS_COMMIT_UPDATED=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Latest Hashes
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hashes
+          path: "*_hash.txt"
 
   fuse-fonts:
-    name: Build Pure English Variants
+    name: Fuse Fonts
     runs-on: ubuntu-latest
-    needs: [check-updates]
-    if: needs.check-updates.outputs.IS_UPDATED == 'true'
+    needs:
+      - check-release-updates
+      - check-commit-updates
+    if: ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' || needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        NERD: [{S: NF, A: --nerd-font}, {S: XX, A: --no-nerd-font}]
-        LIGA: [{S: NL}, {S: XX}]
+        MODE:
+          - Release
+          - Commit
+        LIGA:
+          - SUFFIX: NL
+          - SUFFIX: XX
     env:
-      JB_VER: ${{ needs.check-updates.outputs.JB_VER }}
-      MP_VER: ${{ needs.check-updates.outputs.MP_VER }}
-      NERD_SUFFIX: ${{ matrix.NERD.S }}
-      LIGA_SUFFIX: ${{ matrix.LIGA.S }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      JETBRAINS_LATEST_VERSION: ${{ needs.check-release-updates.outputs.JETBRAINS_LATEST_VERSION }}
+      JETBRAINS_LATEST_HASH: ${{ needs.check-commit-updates.outputs.JETBRAINS_LATEST_HASH }}
+      MAPLE_LATEST_VERSION: ${{ needs.check-release-updates.outputs.MAPLE_LATEST_VERSION }}
+      MAPLE_LATEST_HASH: ${{ needs.check-commit-updates.outputs.MAPLE_LATEST_HASH }}
+      MODE: ${{ matrix.MODE }}
+      LIGA_SUFFIX: ${{ matrix.LIGA.SUFFIX }}
 
-      - name: Build Source Fonts
+    steps:
+      - name: Fetch Python Script & OFL License
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            fuse_fonts.ff
+            strip_ligas.py
+            OFL.txt
+
+      - name: Generate Version
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
         run: |
-          git clone --depth 1 "$JETBRAINS_GIT_URL" JB
-          cd JB && pip install -r requirements.txt && gftools builder "sources/config.yaml" && cd ..
-          mkdir -p src/jb && cp -r JB/fonts/ttf/*.ttf src/jb/
-          
-          git clone --depth 1 "$MAPLE_GIT_URL" MP
-          cd MP && pip install -r requirements.txt
-          python build.py --normal --liga --hinted --ttf-only ${{ matrix.NERD.A }}
-          cd ..
-          mkdir -p src/mp
-          
-          if [[ "${{ matrix.NERD.S }}" == "NF" ]]; then
-            find MP/fonts -type d -name "NF*" -exec cp -r {}/src/. src/mp/ 2>/dev/null || \
-            find MP/fonts -type f -name "*NF*.ttf" -exec cp {} src/mp/ \;
+          if [[ "$MODE" == "Release" ]]; then
+            FUSION_VERSION="1.$(tr -d "." <<< "${JETBRAINS_LATEST_VERSION//v/}").$(tr -d "." <<< "${MAPLE_LATEST_VERSION//v/}")"
           else
-            find MP/fonts -type f -name "*.ttf" ! -name "*NF*" -exec cp {} src/mp/ \;
+            FUSION_VERSION="pre"
           fi
-          echo "--- Maple 源文件列表 ---"
-          ls -lh src/mp
+          echo "FUSION_VERSION="$FUSION_VERSION"" >> $GITHUB_ENV
+
+      - name: Setup Python
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.13
+          check-latest: true
+
+      - name: Build JetBrains
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
+        run: |
+          if [[ "$MODE" == "Release" ]]; then
+            git clone --branch "$JETBRAINS_LATEST_VERSION" --single-branch "$JETBRAINS_GIT_URL"
+          else
+            git clone --depth 1 "$JETBRAINS_GIT_URL"
+          fi
+
+          cd "JetBrainsMono"
+          pip install -r "requirements.txt"
+          gftools builder "sources/config.yaml"
+          cd ".."
+          mkdir -p "source-fonts/jetbrains"
+          cp -r "JetBrainsMono/fonts/ttf/"* "source-fonts/jetbrains/"
+
+      - name: Build Maple (Pure English NF)
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
+        run: |
+          if [[ "$MODE" == "Release" ]]; then
+            git clone --branch "$MAPLE_LATEST_VERSION" --single-branch "$MAPLE_GIT_URL"
+          else
+            git clone --depth 1 "$MAPLE_GIT_URL"
+          fi
+
+          cd "maple-font"
+          pip install -r "requirements.txt"
+          # 核心修改点 1：移除 --cn 参数，确保纯净英文环境，硬编码 --nerd-font
+          python "build.py" --normal --liga --hinted --ttf-only --nerd-font
+          cd ".."
+          mkdir -p "source-fonts/maple"
+          # 提取纯英文版 NF
+          find "maple-font/fonts" -type f -iname "*NF*.ttf" -exec cp {} "source-fonts/maple/" \;
 
       - name: Install Hard Tools
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
         run: |
-          sudo apt-get -y install fontforge zip
-          pip install fonttools gftools
+          sudo apt-get update
+          sudo apt-get -y install "fontforge" "ttfautohint"
+          pip install "foundrytools-cli" "fonttools" "gftools"
 
-      - name: Execute Fusion & Optimization
+      - name: Fuse Fonts & Fix Rendering Issues
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
         run: |
-          mkdir -p out
-          STYLES="Thin ThinItalic ExtraLight ExtraLightItalic Light LightItalic Regular Italic Medium MediumItalic SemiBold SemiBoldItalic Bold BoldItalic ExtraBold ExtraBoldItalic"
-          
-          for S in $STYLES; do
-            M_SRC=$(find src/mp -iname "*$S.ttf" | head -n 1)
-            J_SRC=$(find src/jb -iname "*$S.ttf" | head -n 1)
-            [[ -z "$M_SRC" || -z "$J_SRC" ]] && continue
+          mkdir -p "fused-fonts-HT"
+          mkdir -p "fused-fonts-XX"
 
-            echo "🔨 正在处理字重: $S | 源文件大小: $(du -sh "$M_SRC" | cut -f1)"
+          for STYLE in "Thin" "ThinItalic" "ExtraLight" "ExtraLightItalic" "Light" "LightItalic" "Regular" "Italic" "Medium" "MediumItalic" "SemiBold" "SemiBoldItalic" "Bold" "BoldItalic" "ExtraBold" "ExtraBoldItalic"; do
             
-            fontforge -lang=ff -c "Open(\"$M_SRC\"); Simplify(1,1.5); CorrectDirection(); RoundToInt(); Save(\"c.ttf\");"
-            fontforge "fuse_fonts.ff" "c.ttf" "$J_SRC" "$FUSION_ID-$S" "$FUSION_NAME" "$FUSION_NAME $S" "$S" "t.ttf" || true
+            # 精准寻找纯英文的源文件
+            M_SRC=$(find "source-fonts/maple" -type f -iname "*NF*$STYLE.ttf" | head -n 1)
+            J_SRC="source-fonts/jetbrains/JetBrainsMono-$STYLE.ttf"
+            [[ -z "$M_SRC" ]] && continue
             
-            if [[ -f "t.ttf" ]]; then
-              if [[ "$LIGA_SUFFIX" == "NL" ]]; then
-                fontforge -lang=py -c "import fontforge; f=fontforge.open('t.ttf'); [f.removeLookup(l) for l in f.gsub_lookups]; f.generate('t.ttf')"
-              fi
-              ttx "t.ttf"
-              sed -i 's|<xAvgCharWidth value=".*"/>|<xAvgCharWidth value="600"/>|' "t.ttx"
-              ttx -o "t.ttf" "t.ttx"
-              
-              # 【核心修复】：移动并重命名为简洁格式，不再携带 NF/NL 后缀
-              mv "t.ttf" "out/${FUSION_ID}-$S.ttf"
-              rm -f "t.ttx" "c.ttf"
+            echo "🔨 正在处理: $STYLE"
+            
+            fontforge "fuse_fonts.ff" \
+              "$M_SRC" \
+              "$J_SRC" \
+              "$FUSION_ID-$STYLE" \
+              "$FUSION_NAME" \
+              "$FUSION_NAME $STYLE" \
+              "$STYLE" \
+              "fused-font-HT.ttf"
+            
+            if [[ "$LIGA_SUFFIX" == "NL" ]]; then
+              fontforge "strip_ligas.py" "fused-font-HT.ttf"
             fi
+
+            # 核心修改点 2：解决导致原版乱码的冲突缓存表！彻底清空。
+            python -c "from fontTools.ttLib import TTFont; f=TTFont('fused-font-HT.ttf'); [f.__delitem__(table) for table in ['fpgm', 'prep', 'cvt', 'hdmx', 'VDMX', 'LTSH'] if table in f]; f.save('t_clean.ttf')"
+
+            ttx "t_clean.ttf"
+            sed -i "s|<xAvgCharWidth value=\".*\"/>|<xAvgCharWidth value=\"600\"/>|" "t_clean.ttx"
+            sed -i "s|<ulCodePageRange1 value=\".*\"/>|<ulCodePageRange1 value=\"00100000 00010110 00000001 10011111\"/>|" "t_clean.ttx"
+            ttx -o "fused-font-HT.ttf" "t_clean.ttx"
+            rm "t_clean.ttx" "t_clean.ttf"
+
+            gftools rename-font "fused-font-HT.ttf" "$FUSION_NAME"
+            gftools update-nameids "fused-font-HT.ttf" \
+              --uniqueid "$FUSION_ID-$STYLE-$FUSION_VERSION" \
+              --description "$FUSION_DESCRIPTION" \
+              --designer "$FUSION_DEVELOPER" \
+              --manufacturer "$FUSION_DEVELOPER" \
+              --trademark "$FUSION_NAME" \
+              --version "$FUSION_VERSION" \
+              --copyright "$(echo -e "$JETBRAINS_COPYRIGHT\n$MAPLE_COPYRIGHT\n$FUSION_COPYRIGHT")" \
+              --license "$FUSION_LICENSE" \
+              --urlvendor "https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono" \
+              --urldesigner "https://www.spacetimee.xyz" \
+              --urllicense "https://openfontlicense.org"
+            
+            # gftools 会产生 .fix 文件，对其进行等宽对齐
+            ftcli fix "monospace" "fused-font-HT.ttf.fix"
+
+            # 核心修改点 3：动态生成 XX（无微调）与 HT（自动微调）版本
+            # 经过上面的清洗，此时得到的正是纯净的无冲突 XX 版
+            mv "fused-font-HT.ttf.fix" "fused-fonts-XX/$FUSION_ID-$STYLE.ttf"
+            
+            # 利用 ttfautohint 根据清洗后的字形动态注入全新的、无冲突的渲染指令 (HT 版)
+            ttfautohint --no-info --windows-compatibility --symbol "fused-fonts-XX/$FUSION_ID-$STYLE.ttf" "fused-fonts-HT/$FUSION_ID-$STYLE.ttf"
+            
+            cp "OFL.txt" "fused-fonts-HT/LICENSE.txt"
+            cp "OFL.txt" "fused-fonts-XX/LICENSE.txt"
           done
 
-      - name: Prepare Release Info
+      - name: Zip Fonts
+        if: >-
+          ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' ||
+          needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
         run: |
-          if [[ "${{ env.NERD_SUFFIX }}" == "NF" ]]; then
-            echo "NERD_DESC=含 Nerd Font 图标 (全量补全)" >> $GITHUB_ENV
-          else
-            echo "NERD_DESC=纯净英文 (极致轻量)" >> $GITHUB_ENV
-          fi
-          
-          if [[ "${{ env.LIGA_SUFFIX }}" == "NL" ]]; then
-            echo "LIGA_DESC=禁用连字 (No Ligatures)" >> $GITHUB_ENV
-          else
-            echo "LIGA_DESC=自带连字" >> $GITHUB_ENV
-          fi
+          zip -r -j "$FUSION_ID-NF-$LIGA_SUFFIX-HT.zip" "fused-fonts-HT/"
+          zip -r -j "$FUSION_ID-NF-$LIGA_SUFFIX-XX.zip" "fused-fonts-XX/"
 
-      - name: Package ZIP
-        run: zip -j "${FUSION_ID}-${NERD_SUFFIX}-${LIGA_SUFFIX}.zip" out/*.ttf
-
-      - name: GitHub Release
+      - name: Release Release Fonts
+        if: ${{ needs.check-release-updates.outputs.IS_RELEASE_UPDATED == 'true' && env.MODE == 'Release' }}
         uses: softprops/action-gh-release@v2
         with:
-          files: "${{ env.FUSION_ID }}-${{ env.NERD_SUFFIX }}-${{ env.LIGA_SUFFIX }}.zip"
-          tag_name: "v1.0.0-Build-${{ github.run_number }}"
-          name: "JetBrainsMaple Pure-English #${{ github.run_number }}"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body: |
-            ## ✅ 纯英文编程增强版构建完成
-            - **无中文混入**：仅包含 JetBrains 与 Maple 的英文、符号及图标。
-            - **源版本**: JB(${{ env.JB_VER }}) MP(${{ env.MP_VER }})
-            - **变体说明**:
-              - `${{ env.NERD_SUFFIX }}`: ${{ env.NERD_DESC }}
-              - `${{ env.LIGA_SUFFIX }}`: ${{ env.LIGA_DESC }}
-            - **核心优化**: 强制 600 字宽锁定，执行路径 Simplify 净化，包内字体文件名已精简。
+          files: |
+            ${{ env.FUSION_ID }}-NF-${{ env.LIGA_SUFFIX }}-HT.zip
+            ${{ env.FUSION_ID }}-NF-${{ env.LIGA_SUFFIX }}-XX.zip
+          tag_name: ${{ env.FUSION_VERSION }}
+          name: ${{ env.FUSION_VERSION }}
+          body: >
+            Fused with
+            [JetBrains Mono ${{ env.JETBRAINS_LATEST_VERSION }}](${{ github.server_url }}/JetBrains/JetBrainsMono/releases/tag/${{ env.JETBRAINS_LATEST_VERSION }}) &
+            [Maple Mono ${{ env.MAPLE_LATEST_VERSION }}](${{ github.server_url }}/subframe7536/maple-font/releases/tag/${{ env.MAPLE_LATEST_VERSION }})
+
+            ✅ **纯英文专业版构建**：已剔除原版中冲突的屏幕微调指令，彻底修复乱码现象。动态生成 HT 与 XX。
+          draft: false
+          prerelease: false
+          make_latest: true
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Release Commit Fonts
+        if: ${{ needs.check-commit-updates.outputs.IS_COMMIT_UPDATED == 'true' && env.MODE == 'Commit' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.FUSION_ID }}-NF-${{ env.LIGA_SUFFIX }}-HT.zip
+            ${{ env.FUSION_ID }}-NF-${{ env.LIGA_SUFFIX }}-XX.zip
+          tag_name: ${{ env.FUSION_VERSION }}
+          name: ${{ env.FUSION_VERSION }}
+          body: >
+            Fused with
+            [JetBrains Mono ${{ env.JETBRAINS_LATEST_HASH }}](${{ github.server_url }}/JetBrains/JetBrainsMono/commit/${{ env.JETBRAINS_LATEST_HASH }}) &
+            [Maple Mono ${{ env.MAPLE_LATEST_HASH }}](${{ github.server_url }}/subframe7536/maple-font/commit/${{ env.MAPLE_LATEST_HASH }})
+
+            ✅ **纯英文专业版构建**：已剔除原版中冲突的屏幕微调指令，彻底修复乱码现象。动态生成 HT 与 XX。
+          draft: false
+          prerelease: true
+          make_latest: false
+          token: ${{ secrets.GH_TOKEN }}
