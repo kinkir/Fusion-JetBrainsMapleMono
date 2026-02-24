@@ -2,7 +2,7 @@ name: Fuse Fonts (Pure English NF)
 
 on:
   schedule:
-    - cron: "0 20 * * 0" # 建议改为每周日运行，*/5 每五分钟运行一次太浪费资源了
+    - cron: "0 0 * * 0" # 每周日运行一次
   push:
     branches:
       - "**"
@@ -14,7 +14,7 @@ on:
         default: false
         required: false
 
-# 【修复重点 1】显式声明权限，赋予内置 GITHUB_TOKEN 读取 Actions 和写入文件的权力
+# 保留基础权限声明，但核心操作将使用您的 GH_TOKEN
 permissions:
   contents: write
   actions: read
@@ -88,13 +88,12 @@ jobs:
 
       - name: Get Previous Run Id
         run: |
-          # 【修复重点 2】增强防崩溃逻辑，如果找不到历史记录就留空，避免 Exit Code 4
           PREV_RUN_ID=$(gh run list --workflow "$GITHUB_WORKFLOW" --limit 2 --json "databaseId" --jq ".[1].databaseId" || echo "")
           if [ "$PREV_RUN_ID" == "null" ]; then PREV_RUN_ID=""; fi
           echo "PREV_RUN_ID=$PREV_RUN_ID" >> "$GITHUB_ENV"
         env:
-          # 【修复重点 3】使用系统自带的 GITHUB_TOKEN，无需你手动配置私有密钥
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 【完全使用您的私有密钥】
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Download Previous Versions
         if: env.PREV_RUN_ID != ''
@@ -103,7 +102,7 @@ jobs:
         with:
           name: Versions
           run-id: ${{ env.PREV_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_TOKEN }}
 
       - name: Check Release Updates
         id: check-release-updates
@@ -150,7 +149,7 @@ jobs:
           if [ "$PREV_RUN_ID" == "null" ]; then PREV_RUN_ID=""; fi
           echo "PREV_RUN_ID=$PREV_RUN_ID" >> "$GITHUB_ENV"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Download Previous Hashes
         if: env.PREV_RUN_ID != ''
@@ -159,7 +158,7 @@ jobs:
         with:
           name: Hashes
           run-id: ${{ env.PREV_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_TOKEN }}
 
       - name: Check Commit Updates
         id: check-commit-updates
@@ -258,7 +257,7 @@ jobs:
 
           cd "maple-font"
           pip install -r "requirements.txt"
-          # 硬编码只生成不包含中文的 Nerd Font 版本
+          # 【纯英文+图标】只保留 nerd-font，去掉中文字符集指令
           python "build.py" --normal --liga --hinted --ttf-only --nerd-font
           cd ".."
           mkdir -p "source-fonts/maple"
@@ -296,7 +295,7 @@ jobs:
               fontforge "strip_ligas.py" "fused-font-HT.ttf"
             fi
 
-            # 【防乱码核心】：彻底清空冲突缓存表
+            # 彻底清空冲突缓存表，解决排版乱码
             python -c "from fontTools.ttLib import TTFont; f=TTFont('fused-font-HT.ttf'); [f.__delitem__(table) for table in ['fpgm', 'prep', 'cvt', 'hdmx', 'VDMX', 'LTSH'] if table in f]; f.save('t_clean.ttf')"
 
             ttx "t_clean.ttf"
@@ -321,7 +320,7 @@ jobs:
             
             ftcli fix "monospace" "fused-font-HT.ttf.fix"
 
-            # 动态生成 XX 和 HT 版
+            # 【文件名极简设定】：只保留基础命名如 JetBrainsMapleMono-Regular.ttf
             mv "fused-font-HT.ttf.fix" "fused-fonts-XX/$FUSION_ID-$STYLE.ttf"
             ttfautohint --no-info --windows-compatibility --symbol "fused-fonts-XX/$FUSION_ID-$STYLE.ttf" "fused-fonts-HT/$FUSION_ID-$STYLE.ttf"
             
@@ -331,6 +330,7 @@ jobs:
 
       - name: Zip Fonts
         run: |
+          # 【包名丰富设定】：通过 -j 参数，保证打出的包名带 NF-NL 等字样，但压缩包内文件依然是极简名
           zip -r -j "$FUSION_ID-NF-$LIGA_SUFFIX-HT.zip" "fused-fonts-HT/"
           zip -r -j "$FUSION_ID-NF-$LIGA_SUFFIX-XX.zip" "fused-fonts-XX/"
 
@@ -346,11 +346,11 @@ jobs:
           body: >
             Fused with [JetBrains Mono ${{ env.JETBRAINS_LATEST_VERSION }}](${{ github.server_url }}/JetBrains/JetBrainsMono/releases/tag/${{ env.JETBRAINS_LATEST_VERSION }}) & [Maple Mono ${{ env.MAPLE_LATEST_VERSION }}](${{ github.server_url }}/subframe7536/maple-font/releases/tag/${{ env.MAPLE_LATEST_VERSION }})
 
-            ✅ **纯英文 NF 增强版**：已注入自动除乱码代码，全自动生成 HT 与 XX。
+            ✅ **纯英文 NF 增强版**：内部文件无后缀精简命名，全自动生成 HT 与 XX。
           draft: false
           prerelease: false
           make_latest: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Release Commit Fonts
         if: ${{ env.MODE == 'Commit' }}
@@ -364,8 +364,8 @@ jobs:
           body: >
             Fused with [JetBrains Mono ${{ env.JETBRAINS_LATEST_HASH }}](${{ github.server_url }}/JetBrains/JetBrainsMono/commit/${{ env.JETBRAINS_LATEST_HASH }}) & [Maple Mono ${{ env.MAPLE_LATEST_HASH }}](${{ github.server_url }}/subframe7536/maple-font/commit/${{ env.MAPLE_LATEST_HASH }})
 
-            ✅ **纯英文 NF 增强版**：已注入自动除乱码代码，全自动生成 HT 与 XX。
+            ✅ **纯英文 NF 增强版**：内部文件无后缀精简命名，全自动生成 HT 与 XX。
           draft: false
           prerelease: true
           make_latest: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
