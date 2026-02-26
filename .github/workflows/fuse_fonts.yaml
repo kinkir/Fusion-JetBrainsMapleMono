@@ -296,7 +296,7 @@ jobs:
             fi
 
             # 彻底清空冲突缓存表，解决排版乱码
-            python -c "from fontTools.ttLib import TTFont; f=TTFont('fused-font-HT.ttf'); [f.__delitem__(table) for table in ['fpgm', 'prep', 'cvt', 'hdmx', 'VDMX', 'LTSH'] if table in f]; f.save('t_clean.ttf')"
+            python -c "from fontTools.ttLib import TTFont; f=TTFont('fused-font-HT.ttf'); [f.__delitem__(table) for table in ['fpgm', 'prep', 'cvt', 'hdmx', 'VDMX', 'LTSH', 'GSUB', 'GPOS'] if table in f]; f.save('t_clean.ttf')"
 
             ttx "t_clean.ttf"
             sed -i "s|<xAvgCharWidth value=\".*\"/>|<xAvgCharWidth value=\"600\"/>|" "t_clean.ttx"
