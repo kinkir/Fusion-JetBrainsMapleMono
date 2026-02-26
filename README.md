@@ -7,6 +7,7 @@
 * 适用平台: Any
 
 发布文件按 JetBrainsMapleMono-[NF/XX]-[NL/XX]-[HT/XX].zip 的格式命名:
+
 XX: 占位符，表示该字体没有增加这一特性
 NF: Nerd Font，为部分开发工具、命令行终端、代码编辑器等提供图标支持 (会导致字体文件体积略微增大)
 NL: No Ligatures，禁用连字
