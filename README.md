@@ -13,8 +13,7 @@
 3. NL: No Ligatures，禁用连字
 4. HT: Hinted，使字体在低分辨率屏幕上 (<=1080P) 的渲染更加均匀 (可能会导致字体在高分辨率屏幕上的渲染略微模糊)
 
-## 实时监测
-最近一次检查更新的时间:
+### 最近一次检查更新的时间:
 
 * 北京时间: <!--BJT_TIME-->2026-03-09 08:46:22<!--BJT_TIME-->
 * UTC 时间: <!--UTC_TIME-->2026-03-09 00:46:22<!--UTC_TIME-->
@@ -22,9 +21,7 @@
 ## 致谢名单
 * **JetBrains Maple Mono** *
 * **JetBrains Mono: 为本项目提供所有非中日字形设计**
-* **Maple Mono: 为本项目提供所有中日字形设计**
-* **Resource Han Rounded: 为本项目提供所有中日基础字形设计**
-* **Source Han Sans: 为本项目提供所有中日基础字形设计**
+* **Maple Mono: 为本项目提供所有NF字形设计**
 
 ## 开源协议
 [OFL-1.1](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono?tab=OFL-1.1-1-ov-file)
