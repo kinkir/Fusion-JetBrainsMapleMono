@@ -364,7 +364,7 @@ jobs:
           body: >
             Fused with [JetBrains Mono ${{ env.JETBRAINS_LATEST_HASH }}](${{ github.server_url }}/JetBrains/JetBrainsMono/commit/${{ env.JETBRAINS_LATEST_HASH }}) & [Maple Mono ${{ env.MAPLE_LATEST_HASH }}](${{ github.server_url }}/subframe7536/maple-font/commit/${{ env.MAPLE_LATEST_HASH }})
 
-            ✅ **纯英文 NF 增强版**：内部文件无后缀精简命名，全自动生成 HT 与 XX。
+            ✅ **纯英文 NF 增强版**
           draft: false
           prerelease: true
           make_latest: false
