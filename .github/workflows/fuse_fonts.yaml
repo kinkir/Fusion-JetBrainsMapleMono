@@ -222,12 +222,31 @@ jobs:
 
       - name: Generate Version
         run: |
+          # 原代码：
+          # if [[ "$MODE" == "Release" ]]; then
+          #   FUSION_VERSION="1.$(tr -d "." <<< "${JETBRAINS_LATEST_VERSION//v/}").$(tr -d "." <<< "${MAPLE_LATEST_VERSION//v/}")"
+          # else
+          #   FUSION_VERSION="pre"
+          # fi
+          
+          # --- 修正代码：确保版本号格式稳健，且不包含非法点号 ---
           if [[ "$MODE" == "Release" ]]; then
-            FUSION_VERSION="1.$(tr -d "." <<< "${JETBRAINS_LATEST_VERSION//v/}").$(tr -d "." <<< "${MAPLE_LATEST_VERSION//v/}")"
+            # 提取数字部分并用点连接，确保不会出现连续的点
+            JB_VER=$(echo "${JETBRAINS_LATEST_VERSION//v/}" | tr -d '[:space:]')
+            MP_VER=$(echo "${MAPLE_LATEST_VERSION//v/}" | tr -d '[:space:]')
+            FUSION_VERSION="v1.${JB_VER}.${MP_VER}"
           else
-            FUSION_VERSION="pre"
+            # Commit 模式下使用时间戳或 Hash，确保 Tag 唯一且合法
+            FUSION_VERSION="v0.0.0-$(date +'%Y%m%d%H%M')"
           fi
+          
+          # 检查如果变量依然为空的情况
+          if [[ "$FUSION_VERSION" == "v1.." ]]; then
+            FUSION_VERSION="v1.0.0-manual-$(date +'%s')"
+          fi
+          
           echo "FUSION_VERSION=$FUSION_VERSION" >> $GITHUB_ENV
+          # ---------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -365,6 +384,7 @@ jobs:
             ${{ env.FUSION_ID }}-NF-${{ env.LIGA_SUFFIX }}-XX.zip
           tag_name: ${{ env.FUSION_VERSION }}
           name: ${{ env.FUSION_VERSION }}
+          allowUpdates: true
           body: >
             Fused with [JetBrains Mono ${{ env.JETBRAINS_LATEST_VERSION }}](${{ github.server_url }}/JetBrains/JetBrainsMono/releases/tag/${{ env.JETBRAINS_LATEST_VERSION }}) & [Maple Mono ${{ env.MAPLE_LATEST_VERSION }}](${{ github.server_url }}/subframe7536/maple-font/releases/tag/${{ env.MAPLE_LATEST_VERSION }})
 
