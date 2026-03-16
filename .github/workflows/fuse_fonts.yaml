@@ -21,6 +21,9 @@ permissions:
   issues: write
 
 env:
+# --- 修正代码：解决 Node.js 20 弃用警告 ---
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # ---------------------------------------
   FORCE: ${{ github.event.inputs.FORCE }}
   JETBRAINS_GIT_URL: ${{ github.server_url }}/JetBrains/JetBrainsMono.git
   JETBRAINS_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/JetBrains/JetBrainsMono/releases/latest
@@ -234,12 +237,21 @@ jobs:
 
       - name: Build JetBrains
         run: |
-          if [[ "$MODE" == "Release" ]]; then
-            git clone --branch "$JETBRAINS_LATEST_VERSION" --single-branch "$JETBRAINS_GIT_URL"
+          # if [[ "$MODE" == "Release" ]]; then
+          #   git clone --branch "$JETBRAINS_LATEST_VERSION" --single-branch "$JETBRAINS_GIT_URL"
+          # else
+          #   git clone --depth 1 "$JETBRAINS_GIT_URL"
+          # fi
+          # --- 修正代码：增加判空回退机制，防止 Remote branch not found ---
+          if [[ -z "$JETBRAINS_LATEST_VERSION" || "$JETBRAINS_LATEST_VERSION" == "null" ]]; then
+            echo "⚠️ Warning: JETBRAINS_LATEST_VERSION is empty, falling back to master"
+            git clone --depth 1 "$JETBRAINS_GIT_URL" "JetBrainsMono"
+          elif [[ "$MODE" == "Release" ]]; then
+            git clone --branch "$JETBRAINS_LATEST_VERSION" --single-branch "$JETBRAINS_GIT_URL" "JetBrainsMono"
           else
-            git clone --depth 1 "$JETBRAINS_GIT_URL"
+            git clone --depth 1 "$JETBRAINS_GIT_URL" "JetBrainsMono"
           fi
-
+          # -------------------------------------------------------------
           cd "JetBrainsMono"
           pip install -r "requirements.txt"
           gftools builder "sources/config.yaml"
@@ -249,12 +261,22 @@ jobs:
 
       - name: Build Maple (Pure English NF)
         run: |
-          if [[ "$MODE" == "Release" ]]; then
-            git clone --branch "$MAPLE_LATEST_VERSION" --single-branch "$MAPLE_GIT_URL"
+          # 原代码
+          # if [[ "$MODE" == "Release" ]]; then
+          #   git clone --branch "$MAPLE_LATEST_VERSION" --single-branch "$MAPLE_GIT_URL"
+          # else
+          #   git clone --depth 1 "$MAPLE_GIT_URL"
+          # fi
+          # --- 修正代码：同步增加 Maple 的克隆保护逻辑 ---
+          if [[ -z "$MAPLE_LATEST_VERSION" || "$MAPLE_LATEST_VERSION" == "null" ]]; then
+            echo "⚠️ Warning: MAPLE_LATEST_VERSION is empty, falling back to main/variable branch"
+            git clone --depth 1 "$MAPLE_GIT_URL" "maple-font"
+          elif [[ "$MODE" == "Release" ]]; then
+            git clone --branch "$MAPLE_LATEST_VERSION" --single-branch "$MAPLE_GIT_URL" "maple-font"
           else
-            git clone --depth 1 "$MAPLE_GIT_URL"
+            git clone --depth 1 "$MAPLE_GIT_URL" "maple-font"
           fi
-
+          # -------------------------------------------
           cd "maple-font"
           pip install -r "requirements.txt"
           # 【纯英文+图标】只保留 nerd-font，去掉中文字符集指令
