@@ -21,9 +21,6 @@ permissions:
   issues: write
 
 env:
-# --- 修正代码：解决 Node.js 20 弃用警告 ---
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # ---------------------------------------
   FORCE: ${{ github.event.inputs.FORCE }}
   JETBRAINS_GIT_URL: ${{ github.server_url }}/JetBrains/JetBrainsMono.git
   JETBRAINS_LATEST_RELEASE_API_URL: ${{ github.api_url }}/repos/JetBrains/JetBrainsMono/releases/latest
@@ -101,7 +98,7 @@ jobs:
       - name: Download Previous Versions
         if: env.PREV_RUN_ID != ''
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: Versions
           run-id: ${{ env.PREV_RUN_ID }}
@@ -127,7 +124,7 @@ jobs:
           fi
 
       - name: Upload Latest Versions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Versions
           path: "*_version.txt"
@@ -157,7 +154,7 @@ jobs:
       - name: Download Previous Hashes
         if: env.PREV_RUN_ID != ''
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: Hashes
           run-id: ${{ env.PREV_RUN_ID }}
@@ -182,7 +179,7 @@ jobs:
           fi
 
       - name: Upload Latest Hashes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Hashes
           path: "*_hash.txt"
