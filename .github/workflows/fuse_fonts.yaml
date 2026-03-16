@@ -98,7 +98,7 @@ jobs:
       - name: Download Previous Versions
         if: env.PREV_RUN_ID != ''
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           name: Versions
           run-id: ${{ env.PREV_RUN_ID }}
@@ -124,7 +124,7 @@ jobs:
           fi
 
       - name: Upload Latest Versions
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: Versions
           path: "*_version.txt"
@@ -154,7 +154,7 @@ jobs:
       - name: Download Previous Hashes
         if: env.PREV_RUN_ID != ''
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           name: Hashes
           run-id: ${{ env.PREV_RUN_ID }}
@@ -179,7 +179,7 @@ jobs:
           fi
 
       - name: Upload Latest Hashes
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: Hashes
           path: "*_hash.txt"
@@ -220,30 +220,29 @@ jobs:
       - name: Generate Version
         run: |
           # 原代码：
+          if [[ "$MODE" == "Release" ]]; then
+            FUSION_VERSION="1.$(tr -d "." <<< "${JETBRAINS_LATEST_VERSION//v/}").$(tr -d "." <<< "${MAPLE_LATEST_VERSION//v/}")"
+          else
+            FUSION_VERSION="Pre-release-$(date +'%Y%m%d%H%M')"
+          fi
+          
+          # # --- 修正代码：确保版本号格式稳健，且不包含非法点号 ---
           # if [[ "$MODE" == "Release" ]]; then
-          #   FUSION_VERSION="1.$(tr -d "." <<< "${JETBRAINS_LATEST_VERSION//v/}").$(tr -d "." <<< "${MAPLE_LATEST_VERSION//v/}")"
+          #   # 提取数字部分并用点连接，确保不会出现连续的点
+          #   JB_VER=$(echo "${JETBRAINS_LATEST_VERSION//v/}" | tr -d '[:space:]')
+          #   MP_VER=$(echo "${MAPLE_LATEST_VERSION//v/}" | tr -d '[:space:]')
+          #   FUSION_VERSION="v1.${JB_VER}.${MP_VER}"
           # else
-          #   FUSION_VERSION="pre"
+          #   # Commit 模式下使用时间戳或 Hash，确保 Tag 唯一且合法
+          #   FUSION_VERSION="v0.0.0-$(date +'%Y%m%d%H%M')"
           # fi
           
-          # --- 修正代码：确保版本号格式稳健，且不包含非法点号 ---
-          if [[ "$MODE" == "Release" ]]; then
-            # 提取数字部分并用点连接，确保不会出现连续的点
-            JB_VER=$(echo "${JETBRAINS_LATEST_VERSION//v/}" | tr -d '[:space:]')
-            MP_VER=$(echo "${MAPLE_LATEST_VERSION//v/}" | tr -d '[:space:]')
-            FUSION_VERSION="v1.${JB_VER}.${MP_VER}"
-          else
-            # Commit 模式下使用时间戳或 Hash，确保 Tag 唯一且合法
-            FUSION_VERSION="v0.0.0-$(date +'%Y%m%d%H%M')"
-          fi
-          
-          # 检查如果变量依然为空的情况
-          if [[ "$FUSION_VERSION" == "v1.." ]]; then
-            FUSION_VERSION="v1.0.0-manual-$(date +'%s')"
-          fi
+          # # 检查如果变量依然为空的情况
+          # if [[ "$FUSION_VERSION" == "v1.." ]]; then
+          #   FUSION_VERSION="v1.0.0-manual-$(date +'%s')"
+          # fi
           
           echo "FUSION_VERSION=$FUSION_VERSION" >> $GITHUB_ENV
-          # ---------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v6
